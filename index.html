@@ -1014,7 +1014,7 @@ function onDrop(e) {
 
 // Mobile drag disabled — preserves native scroll on touch devices
 
-// ── Swap two cards in the videos array and re-render ──
+// ── Swap two cards in the videos array, re-render, and persist order ──
 function swapCards(srcCard, destCard) {
   const srcIdx  = parseInt(srcCard.dataset.index);
   const destIdx = parseInt(destCard.dataset.index);
@@ -1031,6 +1031,47 @@ function swapCards(srcCard, destCard) {
   else if (currentIndex === destIdx) currentIndex = srcIdx;
   showSlide(currentIndex, false);
   updateDots();
+
+  // Persist the new order to the server
+  persistOrder();
+}
+
+// ── Save current video order to server ──
+async function persistOrder() {
+  setSaveStatus('Saving…', 'rgba(255,255,255,0.45)');
+  const order = videos.map(v => v.id);
+  try {
+    const res = await fetch(`${SERVER_URL}/reorder`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ order }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setSaveStatus('✓ Order saved', '#4ade80');
+      setTimeout(() => setSaveStatus('', ''), 2500);
+    } else {
+      setSaveStatus('✗ Save failed', '#FF3D6E');
+    }
+  } catch (err) {
+    console.error('Could not save order:', err.message);
+    setSaveStatus('✗ Save failed', '#FF3D6E');
+  }
+}
+
+// ── Show save status next to drag hint ──
+function setSaveStatus(msg, color) {
+  let el = document.getElementById('save-status');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'save-status';
+    el.style.cssText = 'font-size:11px; margin-left:8px; transition:opacity 0.4s;';
+    const hint = document.getElementById('tile-drag-hint');
+    if (hint) hint.appendChild(el);
+  }
+  el.textContent  = msg;
+  el.style.color   = color;
+  el.style.opacity = msg ? '1' : '0';
 }
 function jumpToSlide(index) {
   closeTileView();
