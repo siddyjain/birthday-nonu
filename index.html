@@ -118,7 +118,7 @@
     background: linear-gradient(90deg,var(--pink),var(--orange),var(--yellow));
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   }
-  .slide-hint { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .slide-hint { font-size: 19px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .slide-hint span { animation: bounce 1.6s ease-in-out infinite; display: inline-block; }
   @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
 
@@ -327,10 +327,17 @@
 
   .tile-grid {
     flex: 1; overflow-y: auto;
-    -webkit-overflow-scrolling: touch; /* iOS momentum scroll */
-    display: grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr));
+    -webkit-overflow-scrolling: touch;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
     gap: 10px; padding: 14px; align-content: start;
-    min-height: 0; /* fixes flex child scroll on iOS */
+    min-height: 0;
+  }
+  @media (min-width: 600px) {
+    .tile-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (min-width: 900px) {
+    .tile-grid { grid-template-columns: repeat(4, 1fr); }
   }
   .tile-card {
     position: relative; border-radius: 12px; overflow: hidden;
@@ -338,6 +345,7 @@
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     transition: transform 0.2s, box-shadow 0.2s;
+    min-height: 200px;
   }
   .tile-card:hover { transform: scale(1.04); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
   .tile-card:active { transform: scale(0.97); }
@@ -430,7 +438,7 @@
 
   <div class="side-actions" id="side-actions" style="display:none">
     <div class="action-btn" id="like-btn" title="Love it!" onclick="toggleLike()">🤍</div>
-    <div class="action-btn" title="Mute/Unmute" onclick="toggleMute()">🔇</div>
+    <div class="action-btn" title="Mute/Unmute" onclick="toggleMute()">🔊</div>
     <div class="action-btn" title="All Wishes" onclick="openTileView()">⊞</div>
     <div class="action-btn" title="Send a Wish" onclick="openPanel()">➕</div>
   </div>
@@ -479,7 +487,7 @@ const SERVER_URL = 'https://birthday-server-production.up.railway.app'; // e.g. 
 let videos      = [];   // loaded from server
 let queue       = [];   // pending uploads {file, caption, localUrl}
 let currentIndex = 0;
-let isMuted     = true; // start muted — required for mobile autoplay
+let isMuted     = false;
 let touchStartY = 0;
 let isDragging  = false;
 let panelOpen   = false;
@@ -518,7 +526,6 @@ async function loadVideos(silent = false) {
         showSlide(currentIndex);
         document.getElementById('side-actions').style.display = '';
         document.getElementById('empty-state').style.display = 'none';
-        setTimeout(showUnmuteHint, 1200);
       } else {
         document.getElementById('empty-state').style.display = '';
       }
@@ -710,10 +717,9 @@ function buildSlides() {
     const video = document.createElement('video');
     video.src = v.url;
     video.loop = true;
-    video.muted = true; // always start muted for mobile autoplay
+    video.muted = isMuted;
     video.playsInline = true;
-    video.autoplay = true;
-    video.preload = 'auto';
+    video.preload = 'metadata';
     video.crossOrigin = 'anonymous';
 
     const overlay = document.createElement('div');
@@ -724,9 +730,8 @@ function buildSlides() {
         <div class="slide-counter">${i+1} / ${videos.length}</div>
       </div>
       <div class="slide-bottom">
-        <div class="slide-caption">
-          ${v.caption ? v.caption : `<span class="highlight">Wish #${i+1}</span>`}
-        </div>
+        ${v.caption ? `<div class="slide-caption">${v.caption}</div>` : ''}
+
         ${videos.length > 1 ? `<div class="slide-hint"><span>↑</span> Swipe to see more</div>` : ''}
       </div>
     `;
@@ -752,16 +757,7 @@ function showSlide(index, autoPlay = true) {
     const vid = s.querySelector('video');
     if (i === index && autoPlay) {
       vid.muted = isMuted;
-      // On mobile, play() needs muted=true to work without user gesture
-      // We already set muted on the element, so this should always succeed
-      const playPromise = vid.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(() => {
-          // If autoplay still fails, try again muted
-          vid.muted = true;
-          vid.play().catch(() => {});
-        });
-      }
+      vid.play().catch(()=>{});
     } else {
       vid.pause();
     }
@@ -831,15 +827,6 @@ tapZone.addEventListener('click', () => {
   if (vid.paused) vid.play(); else vid.pause();
 });
 
-// ── Unmute hint — show on first load ──
-function showUnmuteHint() {
-  const btn = document.querySelector('.action-btn[title="Mute/Unmute"]');
-  if (!btn) return;
-  btn.style.boxShadow = '0 0 0 3px rgba(255,255,255,0.4)';
-  btn.title = 'Tap to unmute 🔊';
-  setTimeout(() => { btn.style.boxShadow = ''; }, 3000);
-}
-
 // ── Mute ──
 function toggleMute() {
   isMuted = !isMuted;
@@ -879,22 +866,11 @@ function buildTileGrid() {
   videos.forEach((v, i) => {
     const card = document.createElement('div');
     card.className = 'tile-card' + (v.liked ? ' liked-tile' : '');
-
-    // Generate a Cloudinary thumbnail URL from the video URL
-    // Replaces /upload/ with /upload/w_300,h_400,c_fill,so_0/ for a thumbnail
-    const thumbUrl = v.url.includes('/upload/')
-      ? v.url.replace('/upload/', '/upload/w_300,h_400,c_fill,so_1,f_jpg/')
-             .replace(/\.[^.]+$/, '.jpg')
-      : '';
-
     card.innerHTML = `
-      ${thumbUrl
-        ? `<img src="${thumbUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy" onerror="this.style.display='none'">`
-        : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px;">🎬</div>`
-      }
+      <video src="${v.url}" muted preload="metadata" playsinline crossorigin="anonymous"></video>
       <div class="tile-card-overlay">
         <div class="tile-card-num">Wish ${i+1}</div>
-        <div class="tile-card-caption">${v.caption || 'Wish #'+(i+1)}</div>
+        ${v.caption ? `<div class="tile-card-caption">${v.caption}</div>` : ''}
       </div>
       <div class="play-icon">▶</div>
     `;
@@ -928,4 +904,3 @@ tapZone.addEventListener('touchend', () => { if (panelOpen) closePanel(); });
 </script>
 </body>
 </html>
-
