@@ -374,7 +374,7 @@
   .confetti-piece {
     position: fixed; pointer-events: none;
     width: 8px; height: 8px; border-radius: 2px;
-    animation: fall linear forwards; z-index: 200;
+    animation: fall linear forwards; z-index: 99;
   }
   @keyframes fall {
     0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
@@ -529,7 +529,7 @@ function enterSite() {
   document.getElementById('splash').classList.add('hidden');
   document.getElementById('player').style.display = '';
   document.getElementById('tap-zone').style.pointerEvents = 'auto';
-  launchConfetti();
+  setTimeout(launchConfetti, 750); // delay until splash fade completes
   loadVideos();
   startPolling();
 }
@@ -915,13 +915,19 @@ function buildTileGrid() {
     card.dataset.index = i;
     card.draggable = true;
     // Build Cloudinary poster thumbnail URL
-    const posterUrl = v.url.includes('/upload/')
-      ? v.url.replace('/upload/', '/upload/w_400,h_600,c_fill,so_0.5,f_jpg/').replace(/\.mp4$|\.mov$|\.webm$|\.avi$/, '.jpg')
-      : null;
+    // Generate Cloudinary thumbnail: insert transform params after /upload/
+    // then replace any video extension with .jpg
+    function makePoster(url) {
+      if (!url.includes('/upload/')) return null;
+      const withTransform = url.replace('/upload/', '/upload/w_400,h_600,c_fill,so_1,f_jpg/');
+      // Replace the file extension (anything after last dot) with .jpg
+      return withTransform.replace(/\.[a-zA-Z0-9]+$/, '.jpg');
+    }
+    const posterUrl = makePoster(v.url);
 
     card.innerHTML = `
       ${posterUrl
-        ? `<img src="${posterUrl}" style="width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;" loading="lazy">`
+        ? `<img src="${posterUrl}" style="width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;" loading="lazy" onerror="this.style.display='none'">`
         : `<video data-src="${v.url}" muted preload="none" playsinline crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
       }
       <div class="tile-card-overlay">
