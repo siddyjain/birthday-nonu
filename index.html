@@ -844,14 +844,11 @@ function buildSlides() {
     stack.appendChild(slide);
   });
 
-  // Re-apply current position without transition to avoid ghost swipe animation
+  // Apply positions instantly (no animation) then re-enable transitions after paint
   stack.classList.add('no-transition');
   showSlide(currentIndex, false);
-  // Re-enable transition after a frame
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => stack.classList.remove('no-transition'));
-  });
-  updateDots();
+  // Use setTimeout instead of rAF — ensures browser has fully painted before transitions re-enable
+  setTimeout(() => stack.classList.remove('no-transition'), 100);
 }
 
 function showSlide(index, autoPlay = true) {
@@ -879,11 +876,20 @@ function showSlide(index, autoPlay = true) {
   updateDots();
 }
 
+let transitioning = false;
 function goNext() {
-  if (currentIndex < videos.length - 1) { currentIndex++; showSlide(currentIndex); }
+  if (transitioning || currentIndex >= videos.length - 1) return;
+  transitioning = true;
+  currentIndex++;
+  showSlide(currentIndex);
+  setTimeout(() => { transitioning = false; }, 500);
 }
 function goPrev() {
-  if (currentIndex > 0) { currentIndex--; showSlide(currentIndex); }
+  if (transitioning || currentIndex <= 0) return;
+  transitioning = true;
+  currentIndex--;
+  showSlide(currentIndex);
+  setTimeout(() => { transitioning = false; }, 500);
 }
 
 // ── Dots ──
@@ -903,9 +909,10 @@ const tapZone = document.getElementById('tap-zone');
 tapZone.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; isDragging = false; }, { passive: true });
 tapZone.addEventListener('touchmove',  () => { isDragging = true; },                                     { passive: true });
 tapZone.addEventListener('touchend',   e => {
-  if (!isDragging) return;
+  if (!isDragging) { isDragging = false; return; }
   const dy = touchStartY - e.changedTouches[0].clientY;
-  if (Math.abs(dy) > 40) { dy > 0 ? goNext() : goPrev(); }
+  // Require 60px minimum swipe distance to avoid accidental triggers
+  if (Math.abs(dy) > 60) { dy > 0 ? goNext() : goPrev(); }
   isDragging = false;
 });
 
@@ -915,7 +922,7 @@ document.addEventListener('wheel', e => {
   if (panelOpen || wheelLock || document.getElementById('tile-view').classList.contains('open')) return;
   wheelLock = true;
   e.deltaY > 0 ? goNext() : goPrev();
-  setTimeout(() => wheelLock = false, 600);
+  setTimeout(() => wheelLock = false, 550);
 }, { passive: true });
 
 // ── Keyboard ──
