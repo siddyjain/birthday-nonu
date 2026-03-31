@@ -342,7 +342,6 @@
   .tile-card {
     position: relative; border-radius: 12px; overflow: hidden;
     aspect-ratio: 9/16; cursor: pointer; background: var(--surface);
-    touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     transition: transform 0.2s, box-shadow 0.2s;
     min-height: 200px;
@@ -383,7 +382,7 @@
   }
 
   /* ── Tap Zone ── */
-  #tap-zone { position: fixed; inset: 0; right: 80px; z-index: 8; touch-action: pan-y; }
+  #tap-zone { position: fixed; inset: 0; right: 80px; z-index: 8; touch-action: pan-y; pointer-events: none; }
 
   /* ── Empty & Loading states sit above tap zone ── */
   #empty-state, #loading-state { z-index: 9; pointer-events: all; }
@@ -478,7 +477,7 @@
   <div class="tile-header">
     <div>
       <div class="tile-header-title">All Wishes 🎉</div>
-      <div class="tile-header-subtitle">Hold a video to drag &amp; reorder</div>
+      <div class="tile-header-subtitle" id="tile-drag-hint">Drag to reorder</div>
     </div>
     <div class="tile-close-btn" onclick="closeTileView()">✕</div>
   </div>
@@ -529,6 +528,7 @@ let pollTimer   = null;
 function enterSite() {
   document.getElementById('splash').classList.add('hidden');
   document.getElementById('player').style.display = '';
+  document.getElementById('tap-zone').style.pointerEvents = 'auto';
   launchConfetti();
   loadVideos();
   startPolling();
@@ -894,6 +894,9 @@ function toggleLike() {
 function openTileView() {
   buildTileGrid();
   document.getElementById('tile-view').classList.add('open');
+  // Only show drag hint on non-touch (desktop) devices
+  const hint = document.getElementById('tile-drag-hint');
+  if (hint) hint.style.display = window.matchMedia('(hover: hover)').matches ? '' : 'none';
   const active = document.querySelector('.video-slide.active video');
   if (active) active.pause();
 }
@@ -911,8 +914,16 @@ function buildTileGrid() {
     card.className = 'tile-card' + (v.liked ? ' liked-tile' : '');
     card.dataset.index = i;
     card.draggable = true;
+    // Build Cloudinary poster thumbnail URL
+    const posterUrl = v.url.includes('/upload/')
+      ? v.url.replace('/upload/', '/upload/w_400,h_600,c_fill,so_0.5,f_jpg/').replace(/\.mp4$|\.mov$|\.webm$|\.avi$/, '.jpg')
+      : null;
+
     card.innerHTML = `
-      <video data-src="${v.url}" muted preload="none" playsinline crossorigin="anonymous"></video>
+      ${posterUrl
+        ? `<img src="${posterUrl}" style="width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;" loading="lazy">`
+        : `<video data-src="${v.url}" muted preload="none" playsinline crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
+      }
       <div class="tile-card-overlay">
         <div class="tile-card-num">Wish ${i+1}</div>
         ${v.caption ? `<div class="tile-card-caption">${v.caption}</div>` : ''}
@@ -931,15 +942,11 @@ function buildTileGrid() {
     card.addEventListener('dragover',  onDragOver);
     card.addEventListener('drop',      onDrop);
 
-    // ── Mobile touch drag events ──
-    card.addEventListener('touchstart', onTouchStart, { passive: true });
-    card.addEventListener('touchmove',  onTouchMove,  { passive: false });
-    card.addEventListener('touchend',   onTouchEnd);
-
+    // ── Desktop drag only (no mobile drag — preserves native scroll) ──
     grid.appendChild(card);
   });
 
-  // Lazy-load video thumbnails as they scroll into view
+  // Lazy-load fallback video thumbnails (only used if Cloudinary img fails)
   const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
@@ -947,14 +954,6 @@ function buildTileGrid() {
         if (vid) {
           vid.src = vid.dataset.src;
           vid.removeAttribute('data-src');
-          // Seek to 0.5s to get a visible thumbnail frame
-          vid.addEventListener('loadedmetadata', () => {
-            vid.currentTime = 0.5;
-          }, { once: true });
-          // Fallback: if seek fails, try frame 0
-          vid.addEventListener('error', () => {
-            vid.currentTime = 0;
-          }, { once: true });
         }
         observer.unobserve(entry.target);
       }
@@ -995,140 +994,7 @@ function onDrop(e) {
   swapCards(dragSrc, this);
 }
 
-// ── Mobile touch drag ──
-let touchDragSrc    = null;
-let touchClone      = null;
-let touchOffsetX    = 0;
-let touchOffsetY    = 0;
-let touchLastOver   = null;
-let touchLongPress  = null;  // long-press timer
-let touchIsDragging = false; // true only after long-press fires
-let touchStartX     = 0;
-let touchStartY     = 0;
-
-const LONG_PRESS_MS  = 400; // ms to hold before drag activates
-const CANCEL_MOVE_PX = 8;   // px movement cancels long-press
-
-function onTouchStart(e) {
-  dragMoved       = false;
-  touchIsDragging = false;
-  touchDragSrc    = this;
-
-  const touch  = e.touches[0];
-  const rect   = this.getBoundingClientRect();
-  touchOffsetX = touch.clientX - rect.left;
-  touchOffsetY = touch.clientY - rect.top;
-  touchStartX  = touch.clientX;
-  touchStartY  = touch.clientY;
-
-  // Visual pulse to hint drag is possible
-  this.style.transition = 'transform 0.4s';
-  this.style.transform  = 'scale(0.97)';
-
-  // Start long-press timer — only activate drag after holding
-  touchLongPress = setTimeout(() => {
-    touchIsDragging = true;
-    this.style.transform = '';
-    this.style.transition = '';
-
-    // Vibrate on supported devices
-    if (navigator.vibrate) navigator.vibrate(40);
-
-    // Create floating clone
-    touchClone = this.cloneNode(true);
-    touchClone.style.cssText = `
-      position: fixed;
-      width: ${rect.width}px;
-      height: ${rect.height}px;
-      left: ${touch.clientX - touchOffsetX}px;
-      top: ${touch.clientY - touchOffsetY}px;
-      opacity: 0.88;
-      pointer-events: none;
-      z-index: 9999;
-      border-radius: 12px;
-      box-shadow: 0 16px 48px rgba(0,0,0,0.7), 0 0 0 3px var(--pink);
-      transform: scale(1.06);
-      transition: none;
-    `;
-    document.body.appendChild(touchClone);
-    this.classList.add('dragging');
-
-    // Lock grid scroll while dragging
-    document.getElementById('tile-grid').style.overflow = 'hidden';
-  }, LONG_PRESS_MS);
-}
-
-function onTouchMove(e) {
-  const touch = e.touches[0];
-  const dx = Math.abs(touch.clientX - touchStartX);
-  const dy = Math.abs(touch.clientY - touchStartY);
-
-  // Cancel long-press if finger moved too much before it fired
-  if (!touchIsDragging) {
-    if (dx > CANCEL_MOVE_PX || dy > CANCEL_MOVE_PX) {
-      cancelTouchDrag();
-    }
-    return;
-  }
-
-  // Active drag
-  e.preventDefault();
-  dragMoved = true;
-
-  touchClone.style.left = (touch.clientX - touchOffsetX) + 'px';
-  touchClone.style.top  = (touch.clientY - touchOffsetY) + 'px';
-
-  // Find which card is under finger
-  touchClone.style.display = 'none';
-  const el = document.elementFromPoint(touch.clientX, touch.clientY);
-  touchClone.style.display = '';
-
-  const overCard = el ? el.closest('.tile-card') : null;
-  if (overCard && overCard !== touchDragSrc) {
-    if (overCard !== touchLastOver) {
-      document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
-      overCard.classList.add('drag-over');
-      touchLastOver = overCard;
-    }
-  } else if (!overCard) {
-    document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
-    touchLastOver = null;
-  }
-}
-
-function onTouchEnd(e) {
-  if (!touchDragSrc) return;
-
-  if (touchIsDragging) {
-    // Commit the reorder
-    if (touchClone) { touchClone.remove(); touchClone = null; }
-    touchDragSrc.classList.remove('dragging');
-    document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
-    document.getElementById('tile-grid').style.overflow = '';
-
-    if (dragMoved && touchLastOver && touchLastOver !== touchDragSrc) {
-      swapCards(touchDragSrc, touchLastOver);
-    }
-  } else {
-    cancelTouchDrag();
-  }
-
-  touchDragSrc    = null;
-  touchLastOver   = null;
-  touchIsDragging = false;
-}
-
-function cancelTouchDrag() {
-  if (touchLongPress) { clearTimeout(touchLongPress); touchLongPress = null; }
-  if (touchClone)     { touchClone.remove(); touchClone = null; }
-  if (touchDragSrc) {
-    touchDragSrc.style.transform  = '';
-    touchDragSrc.style.transition = '';
-    touchDragSrc.classList.remove('dragging');
-  }
-  document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
-  document.getElementById('tile-grid').style.overflow = '';
-}
+// Mobile drag disabled — preserves native scroll on touch devices
 
 // ── Swap two cards in the videos array and re-render ──
 function swapCards(srcCard, destCard) {
