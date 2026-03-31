@@ -330,24 +330,30 @@
     -webkit-overflow-scrolling: touch;
     display: grid;
     grid-template-columns: repeat(2, 1fr);
+    /* Explicit row height based on column width × 16/9 ratio */
+    grid-auto-rows: calc((100vw - 28px - 10px) / 2 / 9 * 16);
     gap: 10px; padding: 14px; align-content: start;
     min-height: 0;
   }
   @media (min-width: 600px) {
-    .tile-grid { grid-template-columns: repeat(3, 1fr); }
+    .tile-grid {
+      grid-template-columns: repeat(3, 1fr);
+      grid-auto-rows: calc((100vw - 28px - 20px) / 3 / 9 * 16);
+    }
   }
   @media (min-width: 900px) {
-    .tile-grid { grid-template-columns: repeat(4, 1fr); }
+    .tile-grid {
+      grid-template-columns: repeat(4, 1fr);
+      grid-auto-rows: calc((100vw - 28px - 30px) / 4 / 9 * 16);
+    }
   }
   .tile-card {
     position: relative; border-radius: 12px; overflow: hidden;
     cursor: pointer; background: var(--surface);
     -webkit-tap-highlight-color: transparent;
     transition: transform 0.2s, box-shadow 0.2s;
-    /* padding-bottom trick: reliable 9:16 aspect ratio on all browsers */
-    width: 100%;
-    padding-bottom: 177.78%; /* 16/9 * 100 */
-    height: 0;
+    /* height is controlled by grid-auto-rows above */
+    width: 100%; height: 100%;
   }
   /* All children fill the card absolutely */
   .tile-card > * {
