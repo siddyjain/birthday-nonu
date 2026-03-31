@@ -276,8 +276,8 @@
 
   /* ── Progress Dots ── */
   #progress-dots {
-    position: fixed; right: 8px; top: 50%;
-    transform: translateY(-50%); z-index: 10;
+    position: fixed; right: 72px; top: 50%;
+    transform: translateY(-50%); z-index: 7;
     display: flex; flex-direction: column; gap: 6px; align-items: center;
   }
   .dot { width: 4px; border-radius: 2px; background: rgba(255,255,255,0.25); transition: all 0.3s ease; }
@@ -401,6 +401,28 @@
   }
   #new-video-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
+
+  /* ── Drag to Reorder ── */
+  .tile-header-subtitle {
+    font-size: 12px; color: var(--muted); margin-top: 2px;
+  }
+  .tile-card.dragging {
+    opacity: 0.4; transform: scale(0.96);
+    box-shadow: 0 0 0 2px var(--pink);
+    z-index: 100;
+  }
+  .tile-card.drag-over {
+    box-shadow: 0 0 0 3px var(--pink), 0 8px 30px rgba(255,61,110,0.4);
+    transform: scale(1.03);
+  }
+  .tile-card.drag-handle-active {
+    cursor: grabbing;
+  }
+  .drag-hint {
+    font-size: 11px; color: var(--muted);
+    text-align: center; padding: 4px 0 0;
+    letter-spacing: 0.05em;
+  }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
@@ -449,7 +471,10 @@
 <!-- ══ TILE VIEW ══ -->
 <div id="tile-view">
   <div class="tile-header">
-    <div class="tile-header-title">All Wishes 🎉</div>
+    <div>
+      <div class="tile-header-title">All Wishes 🎉</div>
+      <div class="tile-header-subtitle">Hold &amp; drag to reorder</div>
+    </div>
     <div class="tile-close-btn" onclick="closeTileView()">✕</div>
   </div>
   <div class="tile-grid" id="tile-grid"></div>
@@ -481,7 +506,7 @@
 // ╔══════════════════════════════════════════════════════╗
 // ║  CONFIGURATION — change this after you deploy        ║
 // ╚══════════════════════════════════════════════════════╝
-const SERVER_URL = 'https://birthday-server-production.up.railway.app'; // e.g. https://birthday-server.up.railway.app
+const SERVER_URL = 'https://birthday-server-production.up.railway.app';
 
 // ── State ──
 let videos      = [];   // loaded from server
@@ -518,7 +543,13 @@ async function loadVideos(silent = false) {
     const data = await res.json();
 
     const prev = videos.length;
-    videos = data.videos.map(v => ({ ...v, liked: false }));
+
+    // Fix 2: preserve liked states across reloads
+    const likedIds = new Set(videos.filter(v => v.liked).map(v => v.id));
+    videos = data.videos.map(v => ({ ...v, liked: likedIds.has(v.id) }));
+
+    // Fix 1: clamp currentIndex in case videos were removed
+    if (currentIndex >= videos.length) currentIndex = Math.max(0, videos.length - 1);
 
     if (!silent) {
       if (videos.length > 0) {
@@ -531,9 +562,15 @@ async function loadVideos(silent = false) {
       }
       document.getElementById('loading-state').classList.remove('show');
     } else {
-      // Silent refresh — new videos arrived
+      // Fix 4: on silent reload, only rebuild if new videos arrived — don't restart playing video
       if (videos.length > prev) {
+        const wasPlaying = !document.querySelector('.video-slide.active video')?.paused;
         buildSlides();
+        // Restore playback state of current video
+        if (wasPlaying) {
+          const activeVid = document.querySelector('.video-slide.active video');
+          if (activeVid) activeVid.play().catch(()=>{});
+        }
         showNewVideoToast();
         document.getElementById('side-actions').style.display = '';
         document.getElementById('empty-state').style.display = 'none';
@@ -863,20 +900,179 @@ function closeTileView() {
 function buildTileGrid() {
   const grid = document.getElementById('tile-grid');
   grid.innerHTML = '';
+
   videos.forEach((v, i) => {
     const card = document.createElement('div');
     card.className = 'tile-card' + (v.liked ? ' liked-tile' : '');
+    card.dataset.index = i;
+    card.draggable = true;
     card.innerHTML = `
-      <video src="${v.url}" muted preload="metadata" playsinline crossorigin="anonymous"></video>
+      <video data-src="${v.url}" muted preload="none" playsinline crossorigin="anonymous"></video>
       <div class="tile-card-overlay">
         <div class="tile-card-num">Wish ${i+1}</div>
         ${v.caption ? `<div class="tile-card-caption">${v.caption}</div>` : ''}
       </div>
       <div class="play-icon">▶</div>
     `;
-    card.addEventListener('click', () => jumpToSlide(i));
+
+    // ── Click to play (only if not dragging) ──
+    card.addEventListener('click', () => {
+      if (!dragMoved) jumpToSlide(parseInt(card.dataset.index));
+    });
+
+    // ── Desktop drag events ──
+    card.addEventListener('dragstart', onDragStart);
+    card.addEventListener('dragend',   onDragEnd);
+    card.addEventListener('dragover',  onDragOver);
+    card.addEventListener('drop',      onDrop);
+
+    // ── Mobile touch drag events ──
+    card.addEventListener('touchstart', onTouchStart, { passive: true });
+    card.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    card.addEventListener('touchend',   onTouchEnd);
+
     grid.appendChild(card);
   });
+
+  // Lazy-load video thumbnails as they scroll into view
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const vid = entry.target.querySelector('video[data-src]');
+        if (vid) { vid.src = vid.dataset.src; vid.removeAttribute('data-src'); }
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { rootMargin: '100px' });
+  grid.querySelectorAll('.tile-card').forEach(card => observer.observe(card));
+}
+
+// ══════════════════════════════════════════════
+//  DRAG TO REORDER
+// ══════════════════════════════════════════════
+let dragSrc     = null;  // card being dragged
+let dragMoved   = false; // distinguish click from drag
+
+// ── Desktop drag ──
+function onDragStart(e) {
+  dragSrc   = this;
+  dragMoved = false;
+  this.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', this.dataset.index);
+}
+function onDragEnd() {
+  this.classList.remove('dragging');
+  document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+}
+function onDragOver(e) {
+  e.preventDefault();
+  dragMoved = true;
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+  if (this !== dragSrc) this.classList.add('drag-over');
+}
+function onDrop(e) {
+  e.preventDefault();
+  if (this === dragSrc) return;
+  this.classList.remove('drag-over');
+  swapCards(dragSrc, this);
+}
+
+// ── Mobile touch drag ──
+let touchDragSrc   = null;
+let touchClone     = null;
+let touchOffsetX   = 0;
+let touchOffsetY   = 0;
+let touchLastOver  = null;
+
+function onTouchStart(e) {
+  dragMoved    = false;
+  touchDragSrc = this;
+  const touch  = e.touches[0];
+  const rect   = this.getBoundingClientRect();
+  touchOffsetX = touch.clientX - rect.left;
+  touchOffsetY = touch.clientY - rect.top;
+
+  // Create a visual clone to drag around
+  touchClone = this.cloneNode(true);
+  touchClone.style.cssText = `
+    position: fixed;
+    width: ${rect.width}px;
+    height: ${rect.height}px;
+    left: ${rect.left}px;
+    top: ${rect.top}px;
+    opacity: 0.85;
+    pointer-events: none;
+    z-index: 9999;
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    transform: scale(1.05);
+    transition: none;
+  `;
+  document.body.appendChild(touchClone);
+  this.classList.add('dragging');
+}
+
+function onTouchMove(e) {
+  if (!touchDragSrc || !touchClone) return;
+  e.preventDefault(); // prevent scroll while dragging
+  dragMoved = true;
+
+  const touch = e.touches[0];
+  touchClone.style.left = (touch.clientX - touchOffsetX) + 'px';
+  touchClone.style.top  = (touch.clientY - touchOffsetY) + 'px';
+
+  // Find which card we're hovering over
+  touchClone.style.display = 'none';
+  const el = document.elementFromPoint(touch.clientX, touch.clientY);
+  touchClone.style.display = '';
+
+  const overCard = el ? el.closest('.tile-card') : null;
+  if (overCard && overCard !== touchDragSrc) {
+    if (overCard !== touchLastOver) {
+      document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+      overCard.classList.add('drag-over');
+      touchLastOver = overCard;
+    }
+  } else if (!overCard) {
+    document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+    touchLastOver = null;
+  }
+}
+
+function onTouchEnd(e) {
+  if (!touchDragSrc) return;
+
+  if (touchClone) { touchClone.remove(); touchClone = null; }
+  touchDragSrc.classList.remove('dragging');
+  document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+
+  if (dragMoved && touchLastOver && touchLastOver !== touchDragSrc) {
+    swapCards(touchDragSrc, touchLastOver);
+  }
+
+  touchDragSrc  = null;
+  touchLastOver = null;
+}
+
+// ── Swap two cards in the videos array and re-render ──
+function swapCards(srcCard, destCard) {
+  const srcIdx  = parseInt(srcCard.dataset.index);
+  const destIdx = parseInt(destCard.dataset.index);
+
+  // Swap in videos array
+  [videos[srcIdx], videos[destIdx]] = [videos[destIdx], videos[srcIdx]];
+
+  // Rebuild grid and slides with new order
+  buildTileGrid();
+  buildSlides();
+
+  // Keep currentIndex pointing to same video after swap
+  if      (currentIndex === srcIdx)  currentIndex = destIdx;
+  else if (currentIndex === destIdx) currentIndex = srcIdx;
+  showSlide(currentIndex, false);
+  updateDots();
 }
 function jumpToSlide(index) {
   closeTileView();
@@ -900,7 +1096,7 @@ function launchConfetti() {
 }
 
 // ── Close panel on outside touch ──
-tapZone.addEventListener('touchend', () => { if (panelOpen) closePanel(); });
+tapZone.addEventListener('touchend', () => { if (panelOpen && !isDragging) closePanel(); });
 </script>
 </body>
 </html>
