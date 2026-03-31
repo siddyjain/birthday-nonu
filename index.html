@@ -1018,17 +1018,25 @@ function onDrop(e) {
 function swapCards(srcCard, destCard) {
   const srcIdx  = parseInt(srcCard.dataset.index);
   const destIdx = parseInt(destCard.dataset.index);
+  if (srcIdx === destIdx) return;
 
-  // Swap in videos array
-  [videos[srcIdx], videos[destIdx]] = [videos[destIdx], videos[srcIdx]];
+  // Track which video the current slide is
+  const currentVideo = videos[currentIndex];
+
+  // Remove the dragged video from its position
+  const [moved] = videos.splice(srcIdx, 1);
+
+  // Insert it at the destination position
+  // (after splice, destIdx may have shifted if srcIdx < destIdx)
+  const insertAt = srcIdx < destIdx ? destIdx : destIdx;
+  videos.splice(insertAt, 0, moved);
+
+  // Restore currentIndex to still point to the same video
+  currentIndex = videos.indexOf(currentVideo);
 
   // Rebuild grid and slides with new order
   buildTileGrid();
   buildSlides();
-
-  // Keep currentIndex pointing to same video after swap
-  if      (currentIndex === srcIdx)  currentIndex = destIdx;
-  else if (currentIndex === destIdx) currentIndex = srcIdx;
   showSlide(currentIndex, false);
   updateDots();
 
