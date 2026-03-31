@@ -344,11 +344,23 @@
     aspect-ratio: 9/16; cursor: pointer; background: var(--surface);
     -webkit-tap-highlight-color: transparent;
     transition: transform 0.2s, box-shadow 0.2s;
-    min-height: 200px;
+    /* Use grid so img fills card and overlay stacks on top */
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+  .tile-card > img,
+  .tile-card > video {
+    grid-area: 1/1;
+    width: 100%; height: 100%;
+    object-fit: cover; display: block;
+  }
+  .tile-card > .tile-card-overlay,
+  .tile-card > .play-icon {
+    grid-area: 1/1;
   }
   .tile-card:hover { transform: scale(1.04); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
   .tile-card:active { transform: scale(0.97); }
-  .tile-card video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+  .tile-card video { pointer-events: none; }
   .tile-card-overlay {
     position: absolute; inset: 0;
     background: linear-gradient(to bottom,transparent 50%,rgba(0,0,0,0.8) 100%);
@@ -927,7 +939,7 @@ function buildTileGrid() {
 
     card.innerHTML = `
       ${posterUrl
-        ? `<img src="${posterUrl}" style="width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;" loading="lazy" onerror="this.style.display='none'">`
+        ? `<img src="${posterUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy" onerror="this.style.display='none'">`
         : `<video data-src="${v.url}" muted preload="none" playsinline crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
       }
       <div class="tile-card-overlay">
