@@ -423,6 +423,11 @@
     text-align: center; padding: 4px 0 0;
     letter-spacing: 0.05em;
   }
+  /* Long-press ring animation */
+  @keyframes longpress-ring {
+    0%   { box-shadow: 0 0 0 0px rgba(255,61,110,0.6); }
+    100% { box-shadow: 0 0 0 6px rgba(255,61,110,0); }
+  }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
@@ -473,7 +478,7 @@
   <div class="tile-header">
     <div>
       <div class="tile-header-title">All Wishes 🎉</div>
-      <div class="tile-header-subtitle">Hold &amp; drag to reorder</div>
+      <div class="tile-header-subtitle">Hold a video to drag &amp; reorder</div>
     </div>
     <div class="tile-close-btn" onclick="closeTileView()">✕</div>
   </div>
@@ -939,11 +944,22 @@ function buildTileGrid() {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
         const vid = entry.target.querySelector('video[data-src]');
-        if (vid) { vid.src = vid.dataset.src; vid.removeAttribute('data-src'); }
+        if (vid) {
+          vid.src = vid.dataset.src;
+          vid.removeAttribute('data-src');
+          // Seek to 0.5s to get a visible thumbnail frame
+          vid.addEventListener('loadedmetadata', () => {
+            vid.currentTime = 0.5;
+          }, { once: true });
+          // Fallback: if seek fails, try frame 0
+          vid.addEventListener('error', () => {
+            vid.currentTime = 0;
+          }, { once: true });
+        }
         observer.unobserve(entry.target);
       }
     });
-  }, { rootMargin: '100px' });
+  }, { rootMargin: '200px' });
   grid.querySelectorAll('.tile-card').forEach(card => observer.observe(card));
 }
 
@@ -980,50 +996,89 @@ function onDrop(e) {
 }
 
 // ── Mobile touch drag ──
-let touchDragSrc   = null;
-let touchClone     = null;
-let touchOffsetX   = 0;
-let touchOffsetY   = 0;
-let touchLastOver  = null;
+let touchDragSrc    = null;
+let touchClone      = null;
+let touchOffsetX    = 0;
+let touchOffsetY    = 0;
+let touchLastOver   = null;
+let touchLongPress  = null;  // long-press timer
+let touchIsDragging = false; // true only after long-press fires
+let touchStartX     = 0;
+let touchStartY     = 0;
+
+const LONG_PRESS_MS  = 400; // ms to hold before drag activates
+const CANCEL_MOVE_PX = 8;   // px movement cancels long-press
 
 function onTouchStart(e) {
-  dragMoved    = false;
-  touchDragSrc = this;
+  dragMoved       = false;
+  touchIsDragging = false;
+  touchDragSrc    = this;
+
   const touch  = e.touches[0];
   const rect   = this.getBoundingClientRect();
   touchOffsetX = touch.clientX - rect.left;
   touchOffsetY = touch.clientY - rect.top;
+  touchStartX  = touch.clientX;
+  touchStartY  = touch.clientY;
 
-  // Create a visual clone to drag around
-  touchClone = this.cloneNode(true);
-  touchClone.style.cssText = `
-    position: fixed;
-    width: ${rect.width}px;
-    height: ${rect.height}px;
-    left: ${rect.left}px;
-    top: ${rect.top}px;
-    opacity: 0.85;
-    pointer-events: none;
-    z-index: 9999;
-    border-radius: 12px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
-    transform: scale(1.05);
-    transition: none;
-  `;
-  document.body.appendChild(touchClone);
-  this.classList.add('dragging');
+  // Visual pulse to hint drag is possible
+  this.style.transition = 'transform 0.4s';
+  this.style.transform  = 'scale(0.97)';
+
+  // Start long-press timer — only activate drag after holding
+  touchLongPress = setTimeout(() => {
+    touchIsDragging = true;
+    this.style.transform = '';
+    this.style.transition = '';
+
+    // Vibrate on supported devices
+    if (navigator.vibrate) navigator.vibrate(40);
+
+    // Create floating clone
+    touchClone = this.cloneNode(true);
+    touchClone.style.cssText = `
+      position: fixed;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      left: ${touch.clientX - touchOffsetX}px;
+      top: ${touch.clientY - touchOffsetY}px;
+      opacity: 0.88;
+      pointer-events: none;
+      z-index: 9999;
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.7), 0 0 0 3px var(--pink);
+      transform: scale(1.06);
+      transition: none;
+    `;
+    document.body.appendChild(touchClone);
+    this.classList.add('dragging');
+
+    // Lock grid scroll while dragging
+    document.getElementById('tile-grid').style.overflow = 'hidden';
+  }, LONG_PRESS_MS);
 }
 
 function onTouchMove(e) {
-  if (!touchDragSrc || !touchClone) return;
-  e.preventDefault(); // prevent scroll while dragging
+  const touch = e.touches[0];
+  const dx = Math.abs(touch.clientX - touchStartX);
+  const dy = Math.abs(touch.clientY - touchStartY);
+
+  // Cancel long-press if finger moved too much before it fired
+  if (!touchIsDragging) {
+    if (dx > CANCEL_MOVE_PX || dy > CANCEL_MOVE_PX) {
+      cancelTouchDrag();
+    }
+    return;
+  }
+
+  // Active drag
+  e.preventDefault();
   dragMoved = true;
 
-  const touch = e.touches[0];
   touchClone.style.left = (touch.clientX - touchOffsetX) + 'px';
   touchClone.style.top  = (touch.clientY - touchOffsetY) + 'px';
 
-  // Find which card we're hovering over
+  // Find which card is under finger
   touchClone.style.display = 'none';
   const el = document.elementFromPoint(touch.clientX, touch.clientY);
   touchClone.style.display = '';
@@ -1044,16 +1099,35 @@ function onTouchMove(e) {
 function onTouchEnd(e) {
   if (!touchDragSrc) return;
 
-  if (touchClone) { touchClone.remove(); touchClone = null; }
-  touchDragSrc.classList.remove('dragging');
-  document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+  if (touchIsDragging) {
+    // Commit the reorder
+    if (touchClone) { touchClone.remove(); touchClone = null; }
+    touchDragSrc.classList.remove('dragging');
+    document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+    document.getElementById('tile-grid').style.overflow = '';
 
-  if (dragMoved && touchLastOver && touchLastOver !== touchDragSrc) {
-    swapCards(touchDragSrc, touchLastOver);
+    if (dragMoved && touchLastOver && touchLastOver !== touchDragSrc) {
+      swapCards(touchDragSrc, touchLastOver);
+    }
+  } else {
+    cancelTouchDrag();
   }
 
-  touchDragSrc  = null;
-  touchLastOver = null;
+  touchDragSrc    = null;
+  touchLastOver   = null;
+  touchIsDragging = false;
+}
+
+function cancelTouchDrag() {
+  if (touchLongPress) { clearTimeout(touchLongPress); touchLongPress = null; }
+  if (touchClone)     { touchClone.remove(); touchClone = null; }
+  if (touchDragSrc) {
+    touchDragSrc.style.transform  = '';
+    touchDragSrc.style.transition = '';
+    touchDragSrc.classList.remove('dragging');
+  }
+  document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+  document.getElementById('tile-grid').style.overflow = '';
 }
 
 // ── Swap two cards in the videos array and re-render ──
