@@ -84,6 +84,7 @@
     will-change: transform;
   }
   .video-slide.active { transform: translateY(0); opacity: 1; z-index: 2; }
+  #video-stack.no-transition .video-slide { transition: none !important; }
   .video-slide.above  { transform: translateY(-100%); opacity: 0; z-index: 1; }
   .video-slide.below  { transform: translateY(100%); opacity: 0; z-index: 1; }
 
@@ -585,18 +586,13 @@ async function loadVideos(silent = false) {
       }
       document.getElementById('loading-state').classList.remove('show');
     } else {
-      // Fix 4: on silent reload, only rebuild if new videos arrived — don't restart playing video
+      // Silent reload: only add NEW slides, never touch existing ones
       if (videos.length > prev) {
-        const wasPlaying = !document.querySelector('.video-slide.active video')?.paused;
-        buildSlides();
-        // Restore playback state of current video
-        if (wasPlaying) {
-          const activeVid = document.querySelector('.video-slide.active video');
-          if (activeVid) activeVid.play().catch(()=>{});
-        }
+        appendNewSlides(prev);
         showNewVideoToast();
         document.getElementById('side-actions').style.display = '';
         document.getElementById('empty-state').style.display = 'none';
+        updateDots();
       }
     }
   } catch (err) {
@@ -611,7 +607,10 @@ async function loadVideos(silent = false) {
 
 // Poll for new videos every 15 seconds
 function startPolling() {
-  pollTimer = setInterval(() => loadVideos(true), 15000);
+  pollTimer = setInterval(() => {
+    // Don't poll while user is mid-swipe
+    if (!isDragging) loadVideos(true);
+  }, 15000);
 }
 
 function showNewVideoToast() {
@@ -765,6 +764,50 @@ function uploadWithProgress(item, progressBar) {
 // ══════════════════════════════════════════════
 //  BUILD SLIDES
 // ══════════════════════════════════════════════
+
+// Only append slides for newly added videos (index >= startFrom)
+// Never touches existing slides — prevents unwanted transitions
+function appendNewSlides(startFrom) {
+  const stack = document.getElementById('video-stack');
+  for (let i = startFrom; i < videos.length; i++) {
+    const v = videos[i];
+    const slide = document.createElement('div');
+    slide.className = 'video-slide below';
+    slide.dataset.index = i;
+
+    const video = document.createElement('video');
+    video.src = v.url;
+    video.loop = true;
+    video.muted = isMuted;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.crossOrigin = 'anonymous';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'slide-overlay';
+    overlay.innerHTML = `
+      <div class="slide-top">
+        <div class="slide-badge">🎂 Nonu's Day</div>
+        <div class="slide-counter">${i+1} / ${videos.length}</div>
+      </div>
+      <div class="slide-bottom">
+        ${v.caption ? `<div class="slide-caption">${v.caption}</div>` : ''}
+        ${videos.length > 1 ? `<div class="slide-hint"><span>↑</span> Swipe to see more</div>` : ''}
+      </div>
+    `;
+
+    slide.appendChild(video);
+    slide.appendChild(overlay);
+    stack.appendChild(slide);
+  }
+
+  // Also update counters on ALL existing slides now that total has changed
+  document.querySelectorAll('.video-slide').forEach((s, i) => {
+    const counter = s.querySelector('.slide-counter');
+    if (counter) counter.textContent = `${i+1} / ${videos.length}`;
+  });
+}
+
 function buildSlides() {
   const stack = document.getElementById('video-stack');
   stack.querySelectorAll('.video-slide').forEach(s => s.remove());
@@ -801,8 +844,13 @@ function buildSlides() {
     stack.appendChild(slide);
   });
 
-  // Re-apply current position
+  // Re-apply current position without transition to avoid ghost swipe animation
+  stack.classList.add('no-transition');
   showSlide(currentIndex, false);
+  // Re-enable transition after a frame
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => stack.classList.remove('no-transition'));
+  });
   updateDots();
 }
 
@@ -873,9 +921,13 @@ document.addEventListener('wheel', e => {
 // ── Keyboard ──
 document.addEventListener('keydown', e => {
   if (panelOpen) return;
+  if (document.getElementById('tile-view').classList.contains('open')) {
+    if (e.key === 'Escape') closeTileView();
+    return;
+  }
   if (e.key === 'ArrowDown' || e.key === 'ArrowRight') goNext();
   if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  goPrev();
-  if (e.key === 'Escape') { closePanel(); closeTileView(); }
+  if (e.key === 'Escape') closePanel();
 });
 
 // ── Tap to pause/play ──
@@ -923,6 +975,13 @@ function closeTileView() {
   const active = document.querySelector('.video-slide.active video');
   if (active) active.play().catch(()=>{});
 }
+// Generate Cloudinary poster image URL from a video URL
+function makePoster(url) {
+  if (!url || !url.includes('/upload/')) return null;
+  const withTransform = url.replace('/upload/', '/upload/w_400,h_600,c_fill,so_1,f_jpg/');
+  return withTransform.replace(/\.[a-zA-Z0-9]+$/, '.jpg');
+}
+
 function buildTileGrid() {
   const grid = document.getElementById('tile-grid');
   grid.innerHTML = '';
@@ -932,15 +991,6 @@ function buildTileGrid() {
     card.className = 'tile-card' + (v.liked ? ' liked-tile' : '');
     card.dataset.index = i;
     card.draggable = true;
-    // Build Cloudinary poster thumbnail URL
-    // Generate Cloudinary thumbnail: insert transform params after /upload/
-    // then replace any video extension with .jpg
-    function makePoster(url) {
-      if (!url.includes('/upload/')) return null;
-      const withTransform = url.replace('/upload/', '/upload/w_400,h_600,c_fill,so_1,f_jpg/');
-      // Replace the file extension (anything after last dot) with .jpg
-      return withTransform.replace(/\.[a-zA-Z0-9]+$/, '.jpg');
-    }
     const posterUrl = makePoster(v.url);
 
     card.innerHTML = `
@@ -1003,6 +1053,9 @@ function onDragStart(e) {
 function onDragEnd() {
   this.classList.remove('dragging');
   document.querySelectorAll('.tile-card').forEach(c => c.classList.remove('drag-over'));
+  // Reset dragMoved after a tick so the click event that follows dragend is blocked,
+  // but the NEXT click is allowed normally
+  setTimeout(() => { dragMoved = false; }, 50);
 }
 function onDragOver(e) {
   e.preventDefault();
@@ -1042,9 +1095,7 @@ function swapCards(srcCard, destCard) {
 
   // Rebuild grid and slides with new order
   buildTileGrid();
-  buildSlides();
-  showSlide(currentIndex, false);
-  updateDots();
+  buildSlides(); // already calls showSlide + updateDots internally
 
   // Persist the new order to the server
   persistOrder();
@@ -1109,7 +1160,7 @@ function launchConfetti() {
 }
 
 // ── Close panel on outside touch ──
-tapZone.addEventListener('touchend', () => { if (panelOpen && !isDragging) closePanel(); });
+tapZone.addEventListener('touchend', () => { if (panelOpen && !isDragging && !document.getElementById('tile-view').classList.contains('open')) closePanel(); });
 </script>
 </body>
 </html>
