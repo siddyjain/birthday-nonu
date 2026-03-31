@@ -124,16 +124,19 @@
 
   /* ── Side Actions ── */
   .side-actions {
-    position: absolute; right: 16px; bottom: 120px; z-index: 10;
+    position: fixed; right: 16px; bottom: 120px; z-index: 15;
     display: flex; flex-direction: column; gap: 20px; align-items: center;
     pointer-events: all;
+    touch-action: manipulation;
   }
   .action-btn {
-    width: 48px; height: 48px; border-radius: 50%;
+    width: 52px; height: 52px; border-radius: 50%;
     background: rgba(255,255,255,0.12); backdrop-filter: blur(10px);
     border: 1px solid rgba(255,255,255,0.18);
     display: flex; align-items: center; justify-content: center;
     font-size: 22px; cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     transition: transform 0.15s, background 0.15s;
   }
   .action-btn:hover { background: rgba(255,255,255,0.22); transform: scale(1.1); }
@@ -142,7 +145,7 @@
 
   /* ── Upload Panel ── */
   #upload-panel {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 70;
     background: var(--surface);
     border-top: 1px solid rgba(255,255,255,0.1);
     border-radius: 20px 20px 0 0;
@@ -294,11 +297,11 @@
 
   /* ── Tile View ── */
   #tile-view {
-    position: fixed; inset: 0; z-index: 40; background: var(--bg);
+    position: fixed; inset: 0; z-index: 60; background: var(--bg);
     display: flex; flex-direction: column;
     opacity: 0; pointer-events: none; transform: translateY(30px);
     transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.22,1,0.36,1);
-    overflow: hidden;
+    overflow: hidden; /* clip the header */
   }
   #tile-view.open { opacity: 1; pointer-events: all; transform: translateY(0); }
 
@@ -312,21 +315,28 @@
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   }
   .tile-close-btn {
-    width: 36px; height: 36px; border-radius: 50%;
+    width: 44px; height: 44px; border-radius: 50%;
     background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
     display: flex; align-items: center; justify-content: center;
-    font-size: 18px; cursor: pointer; transition: background 0.15s, transform 0.15s;
+    font-size: 18px; cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, transform 0.15s;
   }
   .tile-close-btn:hover { background: rgba(255,255,255,0.16); transform: scale(1.08); }
 
   .tile-grid {
     flex: 1; overflow-y: auto;
+    -webkit-overflow-scrolling: touch; /* iOS momentum scroll */
     display: grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr));
     gap: 10px; padding: 14px; align-content: start;
+    min-height: 0; /* fixes flex child scroll on iOS */
   }
   .tile-card {
     position: relative; border-radius: 12px; overflow: hidden;
     aspect-ratio: 9/16; cursor: pointer; background: var(--surface);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     transition: transform 0.2s, box-shadow 0.2s;
   }
   .tile-card:hover { transform: scale(1.04); box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
@@ -350,6 +360,7 @@
     filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
   }
   .tile-card:hover .play-icon { opacity: 1; }
+  @media (hover: none) { .tile-card .play-icon { opacity: 0.75; } }
   .tile-card.liked-tile::after { content:'❤️'; position:absolute; top:8px; right:8px; font-size:14px; }
 
   /* ── Confetti ── */
@@ -364,7 +375,7 @@
   }
 
   /* ── Tap Zone ── */
-  #tap-zone { position: fixed; inset: 0; right: 80px; z-index: 8; }
+  #tap-zone { position: fixed; inset: 0; right: 80px; z-index: 8; touch-action: pan-y; }
 
   /* ── Empty & Loading states sit above tap zone ── */
   #empty-state, #loading-state { z-index: 9; pointer-events: all; }
@@ -419,7 +430,7 @@
 
   <div class="side-actions" id="side-actions" style="display:none">
     <div class="action-btn" id="like-btn" title="Love it!" onclick="toggleLike()">🤍</div>
-    <div class="action-btn" title="Mute/Unmute" onclick="toggleMute()">🔊</div>
+    <div class="action-btn" title="Mute/Unmute" onclick="toggleMute()">🔇</div>
     <div class="action-btn" title="All Wishes" onclick="openTileView()">⊞</div>
     <div class="action-btn" title="Send a Wish" onclick="openPanel()">➕</div>
   </div>
@@ -462,13 +473,13 @@
 // ╔══════════════════════════════════════════════════════╗
 // ║  CONFIGURATION — change this after you deploy        ║
 // ╚══════════════════════════════════════════════════════╝
-   const SERVER_URL = 'https://birthday-server-production.up.railway.app'; // e.g. https://birthday-server.up.railway.app
+const SERVER_URL = 'https://birthday-server-production.up.railway.app'; // e.g. https://birthday-server.up.railway.app
 
 // ── State ──
 let videos      = [];   // loaded from server
 let queue       = [];   // pending uploads {file, caption, localUrl}
 let currentIndex = 0;
-let isMuted     = false;
+let isMuted     = true; // start muted — required for mobile autoplay
 let touchStartY = 0;
 let isDragging  = false;
 let panelOpen   = false;
@@ -507,6 +518,7 @@ async function loadVideos(silent = false) {
         showSlide(currentIndex);
         document.getElementById('side-actions').style.display = '';
         document.getElementById('empty-state').style.display = 'none';
+        setTimeout(showUnmuteHint, 1200);
       } else {
         document.getElementById('empty-state').style.display = '';
       }
@@ -698,9 +710,10 @@ function buildSlides() {
     const video = document.createElement('video');
     video.src = v.url;
     video.loop = true;
-    video.muted = isMuted;
+    video.muted = true; // always start muted for mobile autoplay
     video.playsInline = true;
-    video.preload = 'metadata';
+    video.autoplay = true;
+    video.preload = 'auto';
     video.crossOrigin = 'anonymous';
 
     const overlay = document.createElement('div');
@@ -739,7 +752,16 @@ function showSlide(index, autoPlay = true) {
     const vid = s.querySelector('video');
     if (i === index && autoPlay) {
       vid.muted = isMuted;
-      vid.play().catch(()=>{});
+      // On mobile, play() needs muted=true to work without user gesture
+      // We already set muted on the element, so this should always succeed
+      const playPromise = vid.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          // If autoplay still fails, try again muted
+          vid.muted = true;
+          vid.play().catch(() => {});
+        });
+      }
     } else {
       vid.pause();
     }
@@ -809,6 +831,15 @@ tapZone.addEventListener('click', () => {
   if (vid.paused) vid.play(); else vid.pause();
 });
 
+// ── Unmute hint — show on first load ──
+function showUnmuteHint() {
+  const btn = document.querySelector('.action-btn[title="Mute/Unmute"]');
+  if (!btn) return;
+  btn.style.boxShadow = '0 0 0 3px rgba(255,255,255,0.4)';
+  btn.title = 'Tap to unmute 🔊';
+  setTimeout(() => { btn.style.boxShadow = ''; }, 3000);
+}
+
 // ── Mute ──
 function toggleMute() {
   isMuted = !isMuted;
@@ -848,8 +879,19 @@ function buildTileGrid() {
   videos.forEach((v, i) => {
     const card = document.createElement('div');
     card.className = 'tile-card' + (v.liked ? ' liked-tile' : '');
+
+    // Generate a Cloudinary thumbnail URL from the video URL
+    // Replaces /upload/ with /upload/w_300,h_400,c_fill,so_0/ for a thumbnail
+    const thumbUrl = v.url.includes('/upload/')
+      ? v.url.replace('/upload/', '/upload/w_300,h_400,c_fill,so_1,f_jpg/')
+             .replace(/\.[^.]+$/, '.jpg')
+      : '';
+
     card.innerHTML = `
-      <video src="${v.url}" muted preload="metadata" playsinline crossorigin="anonymous"></video>
+      ${thumbUrl
+        ? `<img src="${thumbUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy" onerror="this.style.display='none'">`
+        : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px;">🎬</div>`
+      }
       <div class="tile-card-overlay">
         <div class="tile-card-num">Wish ${i+1}</div>
         <div class="tile-card-caption">${v.caption || 'Wish #'+(i+1)}</div>
@@ -886,3 +928,4 @@ tapZone.addEventListener('touchend', () => { if (panelOpen) closePanel(); });
 </script>
 </body>
 </html>
+
